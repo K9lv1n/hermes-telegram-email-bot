@@ -1,0 +1,47 @@
+name: Email Digest
+
+# Runs the Gmail checker on a schedule and delivers the summary to Telegram.
+# Completely free: GitHub Actions gives public repos 2,000 minutes/month.
+
+on:
+  schedule:
+    # Cron is in UTC. 01:00 & 10:00 UTC = 09:00 & 18:00 Singapore time.
+    - cron: "0 1,10 * * *"
+  workflow_dispatch: # lets you trigger manually from the Actions tab
+
+jobs:
+  email-digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check Gmail inbox
+        id: check
+        env:
+          EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        run: |
+          python scripts/check_emails.py --limit 10 --json > emails.json
+          echo "Fetched emails"
+
+      - name: Send summary to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python scripts/send_to_telegram.py < emails.json
+
+      - name: Upload email dump (debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emails-json
+          path: emails.json
