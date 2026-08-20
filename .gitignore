@@ -1,0 +1,36 @@
+# ============================================================================
+# SECURITY: NEVER commit real credentials. This file keeps them out of git.
+# ============================================================================
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+auth.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Hermes
+*.log
+logs/
+sessions/
+state.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Node
+node_modules/
