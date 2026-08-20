@@ -34,6 +34,7 @@ tags: [email, gmail, imap, inbox]
 
 ```python
 import imaplib, email, json, os
+from email import message_from_bytes
 from email.header import decode_header
 
 # Credentials come from environment / .env — never hardcode
@@ -51,7 +52,7 @@ recent = ids[-10:] if len(ids) >= 10 else ids
 emails = []
 for e_id in reversed(recent):
     status, msg_data = M.fetch(e_id, '(RFC822)')
-    msg = email.message_from_bytes(msg_data[0][1])
+    msg = message_from_bytes(msg_data[0][1])
 
     # decode subject (handles =?utf-8?B?...?= encoded headers)
     subject = ''

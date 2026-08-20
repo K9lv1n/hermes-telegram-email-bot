@@ -28,6 +28,7 @@ import json
 import os
 import re
 import sys
+from email import message_from_bytes
 from email.header import decode_header
 
 # ---------------------------------------------------------------------------
@@ -74,7 +75,7 @@ def decode_mime_header(raw: str) -> str:
     return "".join(out).strip()
 
 
-def get_body_preview(msg: email.message.Message, max_chars: int = 300) -> str:
+def get_body_preview(msg, max_chars: int = 300) -> str:
     """Extract a plain-text preview from a MIME message."""
     if msg.is_multipart():
         for part in msg.walk():
@@ -142,7 +143,7 @@ def main():
     emails = []
     for e_id in reversed(recent):
         _, msg_data = M.fetch(e_id, "(RFC822)")
-        msg = email.message_from_bytes(msg_data[0][1])
+        msg = message_from_bytes(msg_data[0][1])
         subject = decode_mime_header(msg["Subject"])
         body = get_body_preview(msg)
         emails.append({
