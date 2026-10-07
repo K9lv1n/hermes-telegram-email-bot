@@ -30,6 +30,17 @@ tags: [email, gmail, imap, inbox]
 5. Mark those 10 emails as SEEN after reading
 6. Format the output nicely with emojis
 
+## ⚠️ Pitfall: IMAP `\Seen` side-effects
+
+Fetching a message **body** implicitly sets Gmail's `\Seen` flag — `fetch(id, '(RFC822)')`
+marks the mail as read as a side effect. Two consequences:
+
+- Use `BODY.PEEK[]` instead of `RFC822` when you want to read without marking read.
+- A digest built on `UNSEEN` can silently find nothing, because *any* other IMAP
+  client (Hermes's Email gateway adapter, phone mail app, webmail) marks mail read
+  the moment it fetches a body. If mail is consistently "missing", switch to a
+  **time window** (e.g. `--since-hours 12`) which is independent of read state.
+
 ## Python code template (use this, NOT himalaya CLI)
 
 ```python
