@@ -167,6 +167,13 @@ Two delivery paths are supported. Pick **one** — running both gives you duplic
 | `TELEGRAM_CHAT_ID` | your numeric Telegram user ID |
 | `DEEPSEEK_API_KEY` | your DeepSeek key (enables the readable summary) |
 
+> **📮 Why the digest uses a time window, not "unread":** any IMAP client that
+> fetches a message body implicitly sets Gmail's `\Seen` flag. Hermes's Email
+> gateway adapter does exactly this (and other mail clients do too), so an
+> "unread-only" digest silently finds nothing. The workflow therefore selects
+> mail by **arrival time** (`--since-hours 12`) and reads bodies with
+> `BODY.PEEK[]` so it never mutates your read state.
+
 > **⏱️ Important caveat:** GitHub's free cron is *best-effort*. Scheduled workflows are
 > queued and can run tens of minutes — sometimes hours — late under load, and may be
 > skipped entirely. Observed real-world delays in this project: **5–6 hours**.

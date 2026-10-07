@@ -1,14 +1,14 @@
 name: Email Digest
 
 # Runs the Gmail checker on a schedule and delivers a readable summary to Telegram.
-# Completely free: GitHub Actions gives public repos 2,000 minutes/month.
+# Free: GitHub Actions gives public repos 2,000 minutes/month.
 
 on:
   schedule:
-    # Cron is in UTC (no timezone support). Singapore is UTC+8.
-    # 01:00 UTC = 09:00 SGT   |   13:00 UTC = 21:00 SGT
+    # Cron is UTC (no timezone support). Singapore is UTC+8.
+    # 01:00 UTC = 09:00 SGT  |  13:00 UTC = 21:00 SGT
     - cron: "0 1,13 * * *"
-  workflow_dispatch: # lets you trigger manually from the Actions tab
+  workflow_dispatch: # manual trigger from the Actions tab
 
 jobs:
   email-digest:
@@ -24,13 +24,17 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Check Gmail inbox
+      - name: Collect recent mail
+        # Time-window selection (not UNSEEN): the digest must not depend on
+        # read/unread state, because other IMAP clients — including Hermes's own
+        # Email gateway adapter — mark fetched mail as read on Gmail.
+        # The window (12h) matches the twice-daily cadence, so nothing repeats.
         env:
           EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         run: |
-          # --mark-read so each run only reports NEW mail (no repeats)
-          python scripts/check_emails.py --limit 15 --mark-read --json > emails.json
+          python scripts/check_emails.py --since-hours 12 --limit 25 --json > emails.json
+          python -c "import json;d=json.load(open('emails.json'));print(f'{len(d)} message(s) in window')"
 
       - name: Send summary to Telegram
         env:

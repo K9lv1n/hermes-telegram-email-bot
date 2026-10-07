@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-check_emails.py — standalone Gmail inbox checker with priority ranking.
+check_emails.py — Gmail inbox checker with priority ranking.
 
-This is the same logic the Hermes `gmail-check` skill runs, packaged as a
-standalone script so you can use it WITHOUT the Hermes harness.
+Two selection modes:
+  --since-hours N   → messages received in the last N hours (time-based,
+                      independent of read/unread state). Best for scheduled
+                      digests, because other IMAP clients (or Hermes's own
+                      Email gateway adapter) may mark mail as read.
+  (default)         → UNSEEN messages. Best for interactive "check my emails".
 
-Requirements:
-  - Python 3.10+
-  - Gmail account with 2FA + an App Password (see .env.example)
+Requirements: Python 3.10+ and a Gmail App Password. No third-party deps.
 
 Usage:
   export EMAIL_ADDRESS=you@gmail.com
   export EMAIL_PASSWORD="abcd efgh ijkl mnop"   # app password
-  python check_emails.py [--limit 10] [--mark-read] [--json]
-
-The script reads EMAIL_ADDRESS / EMAIL_PASSWORD from the environment
-(or a local .env file) so credentials never live in code.
+  python check_emails.py --since-hours 12 --json
+  python check_emails.py --limit 10 --mark-read
 
 Author: K9lv1n
 License: MIT
@@ -26,10 +26,11 @@ import email
 import imaplib
 import json
 import os
-import re
 import sys
+from datetime import datetime, timedelta, timezone
 from email import message_from_bytes
 from email.header import decode_header
+from email.utils import parsedate_to_datetime
 
 # ---------------------------------------------------------------------------
 # Priority classification
@@ -48,7 +49,6 @@ MEDIUM_KEYWORDS = [
 
 
 def classify_priority(subject: str, body: str = "") -> str:
-    """Classify an email as HIGH / MEDIUM / LOW by keyword matching."""
     text = f"{subject} {body}".lower()
     if any(k in text for k in HIGH_KEYWORDS):
         return "HIGH"
@@ -62,12 +62,10 @@ def classify_priority(subject: str, body: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 def decode_mime_header(raw: str) -> str:
-    """Decode RFC 2047 encoded headers (e.g. =?utf-8?B?...?=)."""
     if not raw:
         return ""
-    parts = decode_header(raw)
     out = []
-    for part, charset in parts:
+    for part, charset in decode_header(raw):
         if isinstance(part, bytes):
             out.append(part.decode(charset or "utf-8", errors="replace"))
         else:
@@ -76,7 +74,6 @@ def decode_mime_header(raw: str) -> str:
 
 
 def get_body_preview(msg, max_chars: int = 300) -> str:
-    """Extract a plain-text preview from a MIME message."""
     if msg.is_multipart():
         for part in msg.walk():
             if part.get_content_type() == "text/plain":
@@ -90,8 +87,23 @@ def get_body_preview(msg, max_chars: int = 300) -> str:
     return ""
 
 
+def message_datetime(msg) -> datetime | None:
+    """Parse the Date header into an aware datetime (UTC), or None."""
+    raw = msg.get("Date")
+    if not raw:
+        return None
+    try:
+        dt = parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        return None
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def load_env(path: str = ".env") -> dict:
-    """Minimal .env loader (no external deps)."""
     env = {}
     if os.path.exists(path):
         for line in open(path, encoding="utf-8"):
@@ -107,43 +119,62 @@ def load_env(path: str = ".env") -> dict:
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Check Gmail inbox and rank by priority.")
-    parser.add_argument("--limit", type=int, default=10, help="Max emails to fetch (default 10)")
-    parser.add_argument("--mark-read", action="store_true", help="Mark fetched emails as SEEN")
-    parser.add_argument("--json", action="store_true", help="Output raw JSON instead of a summary")
-    parser.add_argument("--env-file", default=".env", help="Path to .env file (default ./.env)")
-    args = parser.parse_args()
+    p = argparse.ArgumentParser(description="Check Gmail and rank by priority.")
+    p.add_argument("--limit", type=int, default=10, help="Max emails (default 10)")
+    p.add_argument("--mark-read", action="store_true", help="Mark fetched emails SEEN")
+    p.add_argument("--json", action="store_true", help="Emit JSON")
+    p.add_argument("--since-hours", type=float, default=None,
+                   help="Only include mail received in the last N hours "
+                        "(time-based; ignores read/unread state)")
+    p.add_argument("--env-file", default=".env", help="Path to .env")
+    args = p.parse_args()
 
-    # Credentials: explicit env > .env file
     env = load_env(args.env_file)
-    email_addr = os.getenv("EMAIL_ADDRESS") or env.get("EMAIL_ADDRESS")
-    email_pass = os.getenv("EMAIL_PASSWORD") or env.get("EMAIL_PASSWORD")
-    imap_host = os.getenv("EMAIL_IMAP_HOST") or env.get("EMAIL_IMAP_HOST") or "imap.gmail.com"
+    addr = os.getenv("EMAIL_ADDRESS") or env.get("EMAIL_ADDRESS")
+    pw = os.getenv("EMAIL_PASSWORD") or env.get("EMAIL_PASSWORD")
+    host = os.getenv("EMAIL_IMAP_HOST") or env.get("EMAIL_IMAP_HOST") or "imap.gmail.com"
 
-    if not email_addr or not email_pass:
-        print("❌ Missing credentials. Set EMAIL_ADDRESS and EMAIL_PASSWORD "
-              "(see .env.example).", file=sys.stderr)
+    if not addr or not pw:
+        print("❌ Missing EMAIL_ADDRESS / EMAIL_PASSWORD (see .env.example).",
+              file=sys.stderr)
         sys.exit(1)
 
-    # Connect
     try:
-        M = imaplib.IMAP4_SSL(imap_host, 993)
-        M.login(email_addr, email_pass)
+        M = imaplib.IMAP4_SSL(host, 993)
+        M.login(addr, pw)
         M.select("INBOX")
     except imaplib.IMAP4.error as e:
         print(f"❌ IMAP login failed: {e}", file=sys.stderr)
-        print("   (For Gmail: use an App Password, not your real password.)", file=sys.stderr)
+        print("   (Gmail requires an App Password + 2FA.)", file=sys.stderr)
         sys.exit(1)
 
-    # Fetch unread
-    status, data = M.search(None, "UNSEEN")
-    ids = data[0].split() if data and data[0] else []
-    recent = ids[-args.limit:] if len(ids) >= args.limit else ids
+    # ---- Choose candidate messages -------------------------------------
+    cutoff = None
+    if args.since_hours is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=args.since_hours)
+        # IMAP SINCE is date-granular; search a wider window then filter locally.
+        search_since = (cutoff - timedelta(days=1)).strftime("%d-%b-%Y")
+        status, data = M.search(None, "SINCE", search_since)
+    else:
+        status, data = M.search(None, "UNSEEN")
+
+    ids = data[0].split() if (status == "OK" and data and data[0]) else []
+    candidates = ids[-args.limit:] if len(ids) >= args.limit else ids
 
     emails = []
-    for e_id in reversed(recent):
-        _, msg_data = M.fetch(e_id, "(RFC822)")
-        msg = message_from_bytes(msg_data[0][1])
+    for e_id in reversed(candidates):
+        _, msg_data = M.fetch(e_id, "(BODY.PEEK[])")  # PEEK: don't set \Seen
+        if not msg_data or not msg_data[0]:
+            continue
+        raw = msg_data[0][1]
+        if isinstance(raw, tuple):
+            raw = raw[0]
+        msg = message_from_bytes(raw)
+
+        sent = message_datetime(msg)
+        if cutoff and (sent is None or sent < cutoff):
+            continue  # outside the requested window
+
         subject = decode_mime_header(msg["Subject"])
         body = get_body_preview(msg)
         emails.append({
@@ -154,14 +185,15 @@ def main():
             "priority": classify_priority(subject, body),
         })
 
-    # Mark read if requested
-    if args.mark_read and recent:
-        for e_id in recent:
+    # Oldest-first reads more naturally in a digest
+    emails.reverse()
+
+    if args.mark_read and candidates:
+        for e_id in candidates:
             M.store(e_id, "+FLAGS", "\\Seen")
 
     M.logout()
 
-    # Output
     if args.json:
         print(json.dumps(emails, indent=2, ensure_ascii=False))
         return
