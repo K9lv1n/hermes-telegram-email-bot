@@ -1,5 +1,7 @@
 # 🤖 Hermes Telegram Email Bot
 
+[![Email Digest](https://github.com/K9lv1n/hermes-telegram-email-bot/actions/workflows/email-digest.yml/badge.svg)](https://github.com/K9lv1n/hermes-telegram-email-bot/actions/workflows/email-digest.yml)
+
 A personal AI email assistant that **reads your Gmail inbox, ranks messages by priority, and delivers clean summaries to your Telegram** — powered by the [Hermes Agent](https://github.com/NousResearch/hermes-agent) harness and the **DeepSeek API**.
 
 Built as a learning project to explore agent harnesses, messaging gateways, LLM tool-calling, and email automation end-to-end.
@@ -11,7 +13,7 @@ Built as a learning project to explore agent harnesses, messaging gateways, LLM 
 | Capability | How |
 |---|---|
 | 📬 **On-demand inbox checks** | Message your Telegram bot *"check my emails"* → it fetches your latest unread mail, categorizes by priority, and replies with a summary |
-| 🕘 **Scheduled summaries** | A cron job delivers a priority-ranked digest to your Telegram twice a day (customizable) |
+| 🕘 **Scheduled summaries** | A free GitHub Actions job (or local Hermes cron) delivers a priority-ranked digest to your Telegram at **09:00 & 21:00 SGT** daily |
 | 🔴🟡🔵 **Priority ranking** | Emails auto-tagged: **HIGH** (deadlines, urgent, invoices), **MEDIUM** (school/work), **LOW** (promos, newsletters) |
 | ✅ **Auto-mark read** | Emails are marked as SEEN after summarization so nothing repeats |
 | 🔐 **Only you** | The bot is locked to your Telegram user ID — friends can't use it unless you add them |
@@ -141,21 +143,57 @@ hermes gateway status
 
 ---
 
-## ⏰ Scheduled Summaries (Cron)
+## ⏰ Scheduled Summaries
 
-Hermes' cron scheduler runs the same skill on a schedule and delivers results to your Telegram:
+Two delivery paths are supported. Pick **one** — running both gives you duplicate messages.
+
+### Option A — GitHub Actions (recommended: free, no server needed)
+
+`.github/workflows/email-digest.yml` runs in GitHub's cloud twice a day and needs no machine of yours to be on.
+
+| | |
+|---|---|
+| **Schedule** | `0 1,13 * * *` UTC = **09:00 & 21:00 Singapore time** daily |
+| **Format** | DeepSeek writes a readable narrative summary (assessment + per-item notes + `Net:` line) |
+| **Cost** | Free — 2,000 Actions minutes/month on public repos (each run uses <1 min) |
+
+**Required repo secrets** (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|---|---|
+| `EMAIL_ADDRESS` | your Gmail address |
+| `EMAIL_PASSWORD` | your Gmail **app password** |
+| `TELEGRAM_BOT_TOKEN` | BotFather token |
+| `TELEGRAM_CHAT_ID` | your numeric Telegram user ID |
+| `DEEPSEEK_API_KEY` | your DeepSeek key (enables the readable summary) |
+
+> **⏱️ Important caveat:** GitHub's free cron is *best-effort*. Scheduled workflows are
+> queued and can run tens of minutes — sometimes hours — late under load, and may be
+> skipped entirely. Observed real-world delays in this project: **5–6 hours**.
+> For punctual delivery, see "Reliable timing" below.
+
+### Option B — Hermes cron (local, exact timing when your machine is on)
 
 ```bash
-hermes cron create "0 9,18 * * *" \
+hermes cron create "0 9,21 * * *" \
   --name "Email Priority Summary" \
   --prompt "Load the gmail-check skill and summarize my inbox by priority." \
   --skills gmail-check \
   --deliver telegram:<your_user_id>
 ```
 
-Or from the Hermes chat UI:
+Runs on schedule while your machine is powered on; silently misses runs when it's off.
+
+### Reliable timing (free)
+
+If you need the digest to land at *exactly* 09:00/21:00, use a free external scheduler
+(e.g. [cron-job.org](https://cron-job.org)) to POST to GitHub's dispatch API at those
+times — this triggers the workflow on demand instead of relying on GitHub's delayed queue:
+
 ```
-/cron create "0 9,18 * * *"  →  then set the prompt + skill
+POST https://api.github.com/repos/<owner>/<repo>/actions/workflows/email-digest.yml/dispatches
+Headers: Authorization: token <PAT with workflow scope>
+Body:    {"ref":"main"}
 ```
 
 ---
