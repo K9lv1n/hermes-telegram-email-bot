@@ -191,17 +191,48 @@ hermes cron create "0 9,21 * * *" \
 
 Runs on schedule while your machine is powered on; silently misses runs when it's off.
 
-### Reliable timing (free)
+### ⏱️ Getting punctual 09:00 / 21:00 delivery (free)
 
-If you need the digest to land at *exactly* 09:00/21:00, use a free external scheduler
-(e.g. [cron-job.org](https://cron-job.org)) to POST to GitHub's dispatch API at those
-times — this triggers the workflow on demand instead of relying on GitHub's delayed queue:
+GitHub's own `schedule:` can run hours late, so the workflow also supports being
+**triggered externally**. Point a free scheduler at GitHub's dispatch API and it fires
+immediately, bypassing the delay queue.
 
+**Step 1 — make a narrow-scope token.** GitHub → Settings → Developer settings →
+**Fine-grained tokens** → Generate new token:
+- **Repository access:** Only select repositories → `hermes-telegram-email-bot`
+- **Permissions:** Repository permissions → **Actions: Read and write** (nothing else)
+- Copy the token (starts with `github_pat_...`)
+
+Using a fine-grained token means a leak can only trigger workflows in this one repo —
+it cannot read or write your code.
+
+**Step 2 — create the cron job** at [cron-job.org](https://cron-job.org) (free account):
+
+| Field | Value |
+|---|---|
+| **Title** | Hermes email digest |
+| **URL** | `https://api.github.com/repos/K9lv1n/hermes-telegram-email-bot/actions/workflows/email-digest.yml/dispatches` |
+| **Schedule** | Custom: `0 09:00` and `0 21:00`, timezone **Asia/Singapore** |
+| **Request method** | `POST` |
+| **Request body** | `{"ref":"main"}` (Content-Type: `application/json`) |
+
+**Request headers:**
 ```
-POST https://api.github.com/repos/<owner>/<repo>/actions/workflows/email-digest.yml/dispatches
-Headers: Authorization: token <PAT with workflow scope>
-Body:    {"ref":"main"}
+Authorization: Bearer github_pat_YOUR_TOKEN
+Accept: application/vnd.github+json
+Content-Type: application/json
+X-GitHub-Api-Version: 2022-11-28
 ```
+
+A `204 No Content` response means success.
+
+**Step 3 — no double-sends.** `scripts/should_run.py` defines 12-hour slots aligned to
+09:00/21:00 SGT and skips a run if a successful digest already went out in that slot.
+So the punctual trigger and GitHub's late fallback schedule can coexist safely —
+whichever fires first wins, the other becomes a no-op.
+
+> Need to force a send outside the gate (e.g. to test)? Run the workflow manually from
+> the **Actions** tab with **force** checked.
 
 ---
 

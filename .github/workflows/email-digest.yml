@@ -1,14 +1,26 @@
 name: Email Digest
 
-# Runs the Gmail checker on a schedule and delivers a readable summary to Telegram.
-# Free: GitHub Actions gives public repos 2,000 minutes/month.
+# Delivers a readable Gmail summary to Telegram.
+#
+# Timing: GitHub's native `schedule:` is best-effort and can run HOURS late.
+# For punctual delivery, an external scheduler (e.g. cron-job.org, free) should
+# call the dispatch API at exactly 09:00 / 21:00 SGT. The dedupe gate below
+# (scripts/should_run.py) ensures a late native run never double-sends.
 
 on:
   schedule:
-    # Cron is UTC (no timezone support). Singapore is UTC+8.
-    # 01:00 UTC = 09:00 SGT  |  13:00 UTC = 21:00 SGT
+    # Fallback only — GitHub may run this late. 01:00 & 13:00 UTC = 09:00 & 21:00 SGT
     - cron: "0 1,13 * * *"
-  workflow_dispatch: # manual trigger from the Actions tab
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Send even if a digest already went out in this slot"
+        type: boolean
+        default: false
+
+permissions:
+  actions: read   # needed by the dedupe gate to list recent runs
+  contents: read
 
 jobs:
   email-digest:
@@ -24,11 +36,19 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Decide whether to run
+        id: gate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WORKFLOW_FILE: email-digest.yml
+          FORCE_RUN: ${{ inputs.force }}
+        run: echo "run=$(python scripts/should_run.py)" >> "$GITHUB_OUTPUT"
+
       - name: Collect recent mail
-        # Time-window selection (not UNSEEN): the digest must not depend on
-        # read/unread state, because other IMAP clients — including Hermes's own
-        # Email gateway adapter — mark fetched mail as read on Gmail.
-        # The window (12h) matches the twice-daily cadence, so nothing repeats.
+        if: steps.gate.outputs.run == 'yes'
+        # Time-window selection (NOT unread): the digest must not depend on
+        # read/unread state, because any IMAP client that fetches a body sets
+        # Gmail's \Seen flag. 12h matches the twice-daily cadence.
         env:
           EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
@@ -37,6 +57,7 @@ jobs:
           python -c "import json;d=json.load(open('emails.json'));print(f'{len(d)} message(s) in window')"
 
       - name: Send summary to Telegram
+        if: steps.gate.outputs.run == 'yes'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
