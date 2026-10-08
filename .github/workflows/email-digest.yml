@@ -11,11 +11,11 @@ on:
   schedule:
     # FALLBACK ONLY. Intended delivery is 09:00 / 21:00 SGT, triggered punctually
     # by scripts/trigger_digest.py via a local Hermes cron job. These fallback
-    # times sit 4h later but stay *inside the same 12h slot*, so the dedupe gate
-    # skips them whenever the punctual trigger already fired. They cover the
+    # times sit 30 min later but stay *inside the same 12h slot*, so the dedupe
+    # gate skips them whenever the punctual trigger already fired. They cover the
     # case where the local machine is off at the intended time.
-    # 05:00 & 17:00 UTC = 13:00 & 01:00 SGT
-    - cron: "0 5,17 * * *"
+    # 01:30 & 13:30 UTC = 09:30 & 21:30 SGT
+    - cron: "30 1,13 * * *"
   workflow_dispatch:
     inputs:
       force:

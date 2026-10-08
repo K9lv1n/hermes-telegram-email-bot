@@ -208,9 +208,9 @@ hermes cron create "0 9,21 * * *" --name "Email Digest Trigger (punctual)" \
 Silent on success and messages you only if the trigger fails. Works whenever the
 gateway is running (it auto-starts on login). No third-party account needed.
 
-**If the machine is off**, the workflow's own fallback schedule (05:00 / 17:00 UTC —
-4h later but inside the *same* 12h slot) still delivers, and the dedupe gate stops it
-double-sending when the local trigger already fired.
+**If the machine is off**, the workflow's own fallback schedule (01:30 / 13:30 UTC —
+30 min later but inside the *same* 12h slot) still delivers, and the dedupe gate stops
+it double-sending when the local trigger already fired.
 
 **Option 2 — fully cloud (cron-job.org).** To remove the dependency on your machine
 entirely, point a free external scheduler at the same dispatch API.
