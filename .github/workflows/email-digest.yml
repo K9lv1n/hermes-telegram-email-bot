@@ -9,8 +9,13 @@ name: Email Digest
 
 on:
   schedule:
-    # Fallback only — GitHub may run this late. 01:00 & 13:00 UTC = 09:00 & 21:00 SGT
-    - cron: "0 1,13 * * *"
+    # FALLBACK ONLY. Intended delivery is 09:00 / 21:00 SGT, triggered punctually
+    # by scripts/trigger_digest.py via a local Hermes cron job. These fallback
+    # times sit 4h later but stay *inside the same 12h slot*, so the dedupe gate
+    # skips them whenever the punctual trigger already fired. They cover the
+    # case where the local machine is off at the intended time.
+    # 05:00 & 17:00 UTC = 13:00 & 01:00 SGT
+    - cron: "0 5,17 * * *"
   workflow_dispatch:
     inputs:
       force:

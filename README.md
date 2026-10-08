@@ -193,9 +193,27 @@ Runs on schedule while your machine is powered on; silently misses runs when it'
 
 ### ⏱️ Getting punctual 09:00 / 21:00 delivery (free)
 
-GitHub's own `schedule:` can run hours late, so the workflow also supports being
-**triggered externally**. Point a free scheduler at GitHub's dispatch API and it fires
-immediately, bypassing the delay queue.
+GitHub's own `schedule:` can run hours late, so the workflow supports being
+**triggered externally** instead — a dispatch executes immediately, bypassing the
+delay queue.
+
+**Option 1 — local trigger (what this repo uses).** A Hermes cron job runs
+`scripts/trigger_digest.py` at exactly 09:00 / 21:00 SGT:
+
+```bash
+hermes cron create "0 9,21 * * *" --name "Email Digest Trigger (punctual)" \
+  --script trigger_digest.py --no-agent
+```
+
+Silent on success and messages you only if the trigger fails. Works whenever the
+gateway is running (it auto-starts on login). No third-party account needed.
+
+**If the machine is off**, the workflow's own fallback schedule (05:00 / 17:00 UTC —
+4h later but inside the *same* 12h slot) still delivers, and the dedupe gate stops it
+double-sending when the local trigger already fired.
+
+**Option 2 — fully cloud (cron-job.org).** To remove the dependency on your machine
+entirely, point a free external scheduler at the same dispatch API.
 
 **Step 1 — make a narrow-scope token.** GitHub → Settings → Developer settings →
 **Fine-grained tokens** → Generate new token:

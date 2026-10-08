@@ -129,14 +129,20 @@ def main():
     p.add_argument("--env-file", default=".env", help="Path to .env")
     args = p.parse_args()
 
+    # Credentials: env vars first, then the local .env, then the project .env.
     env = load_env(args.env_file)
-    addr = os.getenv("EMAIL_ADDRESS") or env.get("EMAIL_ADDRESS")
-    pw = os.getenv("EMAIL_PASSWORD") or env.get("EMAIL_PASSWORD")
-    host = os.getenv("EMAIL_IMAP_HOST") or env.get("EMAIL_IMAP_HOST") or "imap.gmail.com"
+    if not env:
+        env = load_env(os.path.expanduser("~/hermes-telegram-email-bot/.env"))
+    addr = (os.getenv("GMAIL_USER") or os.getenv("EMAIL_ADDRESS")
+            or env.get("GMAIL_USER") or env.get("EMAIL_ADDRESS"))
+    pw = (os.getenv("GMAIL_APP_PASSWORD") or os.getenv("EMAIL_PASSWORD")
+          or env.get("GMAIL_APP_PASSWORD") or env.get("EMAIL_PASSWORD"))
+    host = (os.getenv("EMAIL_IMAP_HOST") or env.get("EMAIL_IMAP_HOST")
+            or "imap.gmail.com")
 
     if not addr or not pw:
-        print("❌ Missing EMAIL_ADDRESS / EMAIL_PASSWORD (see .env.example).",
-              file=sys.stderr)
+        print("❌ Missing GMAIL_USER/GMAIL_APP_PASSWORD (or EMAIL_ADDRESS/"
+              "EMAIL_PASSWORD). See .env.example.", file=sys.stderr)
         sys.exit(1)
 
     try:

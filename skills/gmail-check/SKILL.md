@@ -15,10 +15,17 @@ tags: [email, gmail, imap, inbox]
 
 ## Credentials
 
-Resolve in this order:
-1. `EMAIL_ADDRESS` / `EMAIL_PASSWORD` environment variables
-2. The project's local env file: `~/hermes-telegram-email-bot/.env` (git-ignored)
-3. If neither exists, tell the user credentials are missing and stop.
+Resolve in this order (first hit wins):
+1. `GMAIL_USER` / `GMAIL_APP_PASSWORD` environment variables
+2. `EMAIL_ADDRESS` / `EMAIL_PASSWORD` environment variables
+3. The project's local env file: `~/hermes-telegram-email-bot/.env` (git-ignored)
+
+⚠️ Use the `GMAIL_*` names, not `EMAIL_*`, in the gateway environment. Setting
+`EMAIL_ADDRESS` makes Hermes auto-connect the **Email gateway adapter**, which
+relays mail into the agent and marks it read (setting Gmail's `\Seen` flag).
+`GMAIL_*` provides the same credentials without enabling that adapter.
+
+If no credentials are found, say so and stop — do not guess.
 
 ## Steps
 
@@ -66,10 +73,12 @@ def load_env(path):
 
 # --- credentials: env vars, then the repo's local .env ---
 repo_env = load_env(os.path.expanduser("~/hermes-telegram-email-bot/.env"))
-EMAIL = os.getenv("EMAIL_ADDRESS") or repo_env.get("EMAIL_ADDRESS")
-PASS = os.getenv("EMAIL_PASSWORD") or repo_env.get("EMAIL_PASSWORD")
+EMAIL = (os.getenv("GMAIL_USER") or os.getenv("EMAIL_ADDRESS")
+         or repo_env.get("GMAIL_USER") or repo_env.get("EMAIL_ADDRESS"))
+PASS = (os.getenv("GMAIL_APP_PASSWORD") or os.getenv("EMAIL_PASSWORD")
+        or repo_env.get("GMAIL_APP_PASSWORD") or repo_env.get("EMAIL_PASSWORD"))
 if not EMAIL or not PASS:
-    raise SystemExit("Missing EMAIL_ADDRESS / EMAIL_PASSWORD")
+    raise SystemExit("Missing GMAIL_USER / GMAIL_APP_PASSWORD")
 
 HOURS = 24  # time window
 
