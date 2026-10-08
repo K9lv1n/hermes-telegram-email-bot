@@ -83,10 +83,16 @@ Skills are **markdown documents with frontmatter** that teach the agent how to d
 ### 5. Gmail via IMAP (data source)
 
 - Python's built-in **`imaplib`** connects to `imap.gmail.com:993` (SSL).
-- `SEARCH UNSEEN` returns message IDs; `FETCH (RFC822)` pulls full raw messages.
+- Selection is by **arrival time** (`SEARCH SINCE <date>` plus a local filter on the `Date` header), **not** by unread state — see the `\Seen` pitfall below.
+- `FETCH (BODY.PEEK[])` pulls raw messages **without** setting `\Seen`.
 - The `email` stdlib module parses MIME: headers (`From`, `Subject`, `Date`) + body extraction.
 - **App passwords**: Gmail requires an app-specific password (16 chars) when 2FA is on. This replaces your real password in the IMAP `LOGIN`.
-- After summarization, `STORE +FLAGS \Seen` marks messages read so the next check only sees *new* mail.
+
+> **⚠️ The `\Seen` pitfall.** `FETCH (RFC822)` is *not* read-only — it implicitly marks the
+> message read. Hermes's own Email gateway adapter does exactly this on every poll, which
+> silently consumed the whole inbox (**0 unread of 15,162**) and made an UNSEEN-based digest
+> find nothing. Two consequences: use `BODY.PEEK[]` when you only want to look, and never key
+> a digest off "unread" when other clients share the mailbox.
 
 ### 6. DeepSeek API (the LLM brain)
 
@@ -106,10 +112,10 @@ Skills are **markdown documents with frontmatter** that teach the agent how to d
 5.  ─► Skill instructs: run imaplib snippet
 6.  ─► terminal tool executes python:
         imaplib.IMAP4_SSL('imap.gmail.com', 993)
-        .login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-        .search(None, 'UNSEEN')              → last 10 IDs
-        .fetch(id, '(RFC822)')               → parse From/Subject/Date/body
-        .store(id, '+FLAGS', '\\Seen')       → mark read
+        .login(GMAIL_USER, GMAIL_APP_PASSWORD)
+        .search(None, 'SINCE', <date>)       → candidates in the window
+        .fetch(id, '(BODY.PEEK[])')          → parse From/Subject/Date/body
+                                             (filter by Date header locally)
 7.  ─► Tool result (JSON of emails) fed back to LLM
 8.  ─► LLM categorizes 🔴🟡🔵 and formats the summary
 9.  ─► Gateway sends formatted reply to Telegram
@@ -120,23 +126,35 @@ Total round trip: ~2–5 seconds for 10 emails.
 
 ---
 
-## Scheduled Digests (Cron)
+## Scheduled Digests — Cloud, Not Local
 
-The same skill runs on a schedule without any user message:
+The digest does **not** run on the local machine. GitHub's own scheduler is best-effort
+(observed running 5–6 hours late), so the workflow is triggered externally instead:
 
 ```
-cron scheduler (in gateway)
-   │  every tick at 09:00 / 18:00
+cron-job.org  (external, free)
+   │  POST /repos/<owner>/<repo>/actions/workflows/email-digest.yml/dispatches
+   │  exactly 09:00 / 21:00 SGT
    ▼
-spawns agent session with prompt:
-   "Load the gmail-check skill and summarize my inbox by priority."
+GitHub Actions  (email-digest.yml) — dispatched runs start immediately, no queue delay
+   │
+   ├─ should_run.py       12h-slot dedupe gate (skip if a digest already went out)
+   ├─ check_emails.py     IMAP read, last 12h, priority ranking
+   └─ send_to_telegram.py DeepSeek summary → Telegram
    ▼
-same imaplib → LLM → summary pipeline
-   ▼
-delivers result to telegram:<user_id>  (your DM)
+Telegram DM  ✓
 ```
 
-Cron jobs are **durable** — they're persisted in Hermes' scheduler and survive gateway restarts.
+**Fallback.** The workflow also carries its own `schedule:` at 09:30 / 21:30 SGT — 30 minutes
+later but *inside the same 12h slot*, so the dedupe gate suppresses it whenever the punctual
+trigger already fired. It exists only to cover a cron-job.org outage.
+
+**Dedupe slots** are 01:00–13:00 and 13:00–01:00 UTC (09:00–21:00 and 21:00–09:00 SGT). A run
+is skipped if a successful digest already exists in the current slot.
+
+A local Hermes cron job that dispatches the same workflow (`trigger_digest.py`) exists as a
+spare but is **paused** — two punctual triggers firing in the same minute can race past the
+gate and double-send.
 
 ---
 

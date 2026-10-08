@@ -2,9 +2,34 @@
 
 [![Email Digest](https://github.com/K9lv1n/hermes-telegram-email-bot/actions/workflows/email-digest.yml/badge.svg)](https://github.com/K9lv1n/hermes-telegram-email-bot/actions/workflows/email-digest.yml)
 
-A personal AI email assistant that **reads your Gmail inbox, ranks messages by priority, and delivers clean summaries to your Telegram** — powered by the [Hermes Agent](https://github.com/NousResearch/hermes-agent) harness and the **DeepSeek API**.
+A personal email assistant that **reads my Gmail, ranks messages by priority, and delivers a readable summary to my Telegram** — twice a day, on time, without needing my laptop switched on.
 
-Built as a learning project to explore agent harnesses, messaging gateways, LLM tool-calling, and email automation end-to-end.
+Built as a learning project to understand agent harnesses, messaging gateways, LLM tool-calling, and email automation end to end.
+
+---
+
+## 📌 Current Setup At A Glance
+
+Everything below is the **live configuration**. Start here if you're trying to remember how this works.
+
+| Thing | Value |
+|---|---|
+| **Repo** | `K9lv1n/hermes-telegram-email-bot` (public) |
+| **Telegram bot** | `@dih67bot` ("Deepseek hermes") |
+| **Allowed Telegram user** | `5724965598` (me) |
+| **Gmail account read** | `kalvinchin2@gmail.com` (app password, IMAP) |
+| **LLM** | DeepSeek (`deepseek-chat`) |
+| **Digest times** | **09:00 & 21:00 SGT** (Asia/Singapore) |
+| **Punctual trigger** | **cron-job.org** → GitHub dispatch API |
+| **Fallback trigger** | GitHub's own schedule (`30 1,13 * * *` UTC = 09:30 / 21:30 SGT) |
+| **Digest window** | Mail from the **last 12 hours** |
+| **Read state** | **Never modified** — the digest does not mark mail as read |
+| **Duplicate protection** | `scripts/should_run.py` (12-hour slot gate) |
+| **Local Hermes trigger** | ⏸️ **paused** (spare, see *Operational Status*) |
+| **Interactive bot** | Runs on my PC via the Hermes gateway |
+
+### Repo secrets (Settings → Secrets → Actions)
+`EMAIL_ADDRESS` · `EMAIL_PASSWORD` · `TELEGRAM_BOT_TOKEN` · `TELEGRAM_CHAT_ID` · `DEEPSEEK_API_KEY`
 
 ---
 
@@ -12,255 +37,144 @@ Built as a learning project to explore agent harnesses, messaging gateways, LLM 
 
 | Capability | How |
 |---|---|
-| 📬 **On-demand inbox checks** | Message your Telegram bot *"check my emails"* → it fetches your latest unread mail, categorizes by priority, and replies with a summary |
-| 🕘 **Scheduled summaries** | A free GitHub Actions job (or local Hermes cron) delivers a priority-ranked digest to your Telegram at **09:00 & 21:00 SGT** daily |
-| 🔴🟡🔵 **Priority ranking** | Emails auto-tagged: **HIGH** (deadlines, urgent, invoices), **MEDIUM** (school/work), **LOW** (promos, newsletters) |
-| ✅ **Auto-mark read** | Emails are marked as SEEN after summarization so nothing repeats |
-| 🔐 **Only you** | The bot is locked to your Telegram user ID — friends can't use it unless you add them |
+| 🕘 **Scheduled digest** | cron-job.org triggers a GitHub Actions job at 09:00 / 21:00 SGT → it reads Gmail, hands the mail to DeepSeek, and posts a readable summary to Telegram |
+| 📬 **On-demand check** | Message `@dih67bot` *"check my emails"* → the Hermes bot on my PC runs the same logic and replies in chat |
+| 🔴🟡🔵 **Priority ranking** | Keyword rules tag each mail **HIGH** (deadlines, payments, exams), **MEDIUM** (school/work), **LOW** (promos, newsletters) |
+| 🧠 **Readable output** | DeepSeek writes a short assessment, the grouped list with a note per item, and a closing `Net:` line — not just a bare list |
+| 🔐 **Only me** | The bot is locked to my Telegram user ID |
+| 💤 **Laptop-independent** | The scheduled digest runs entirely in the cloud — my machine can be off |
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ How It Works
+
+There are **two independent paths**. They share the same email-reading logic but never run at the same time.
 
 ```
-┌─────────────┐    Telegram Bot API (long polling)     ┌──────────────────────┐
-│  📱 Your    │ ◄────────────────────────────────────► │   Hermes Agent       │
-│  Phone      │                                        │   (gateway process)  │
-│  (Telegram) │   "check my emails"                    │                      │
-└─────────────┘                                        │  ┌────────────────┐  │
-                                                       │  │ gmail-check    │  │
-                                                       │  │ skill (imaplib)│  │
-┌─────────────┐                                        │  └───────┬────────┘  │
-│  💻 CLI /   │                                        │          │           │
-│  VS Code    │  hermes gateway / hermes acp          │          ▼           │
-│  (optional) │ ◄────────────────────────────────────► │  ┌────────────────┐  │
-└─────────────┘                                        │  │ DeepSeek API   │  │
-                                                       │  │ (the LLM brain)│  │
-                                                       │  └────────────────┘  │
-                                                       └──────────┬───────────┘
-                                                                  │ IMAP (SSL :993)
-                                                                  ▼
-                                                       ┌──────────────────────┐
-                                                       │  📧 Gmail Inbox      │
-                                                       └──────────────────────┘
+                    ┌────────────────────────────────────────────────┐
+   SCHEDULED PATH   │                                                │
+                    │   ┌──────────────┐   09:00 / 21:00 SGT        │
+                    │   │ cron-job.org │ ──POST dispatch──┐         │
+                    │   └──────────────┘                  │         │
+                    │                                     ▼         │
+                    │              ┌──────────────────────────────┐ │
+                    │              │      GitHub Actions          │ │
+                    │              │  (email-digest.yml)          │ │
+                    │              │  1. should_run.py — dedupe   │ │
+                    │              │  2. check_emails.py — Gmail  │ │
+                    │              │  3. send_to_telegram.py      │ │
+                    │              └───────┬──────────────┬───────┘ │
+                    └──────────────────────┼──────────────┼─────────┘
+                                           │              │
+                      IMAP :993            │              │  Bot API
+                                           ▼              ▼
+                                    ┌───────────┐   ┌──────────────┐
+                                    │  Gmail    │   │  Telegram    │
+                                    └───────────┘   │  @dih67bot   │
+                                           ▲        └──────────────┘
+                                           │              ▲
+                      IMAP :993            │              │  Bot API
+         ┌─────────────────────────────────┴──────────────┴─────────┐
+         │                    MY PC (Hermes gateway)                 │
+         │  "check my emails" → gmail-check skill → reply in chat    │
+         └──────────────────────────────────────────────────────────┘
+                      INTERACTIVE PATH
 ```
 
-**Data flow for one inbox check:**
+### The scheduled digest (the main event)
 
-1. You message the bot → Telegram webhook/polling delivers it to the **Hermes gateway**
-2. Hermes loads the **`gmail-check` skill** (triggered by phrases like *"check my emails"*)
-3. The skill runs a Python `imaplib` snippet → connects to Gmail over SSL → fetches the last 10 UNSEEN emails
-4. Each email's **From / Subject / Date / preview** is extracted and **priority-categorized** with keyword rules
-5. The **DeepSeek API** (the active model provider) formats the result into a clean, emoji-labeled Telegram reply
-6. Hermes marks the emails SEEN and sends the summary back to your chat
+1. **cron-job.org** fires at exactly 09:00 / 21:00 SGT and POSTs to GitHub's dispatch API
+2. GitHub starts the workflow **immediately** (dispatched runs skip the scheduling queue)
+3. `should_run.py` asks: *has a digest already gone out in this 12-hour slot?* If yes → stop here
+4. `check_emails.py` connects to Gmail over IMAP and pulls mail from the **last 12 hours**
+5. `send_to_telegram.py` sends that mail to **DeepSeek**, which writes the readable summary
+6. The summary is posted to my Telegram
 
-> **Key insight:** the LLM doesn't *store* your emails — the skill reads them at query time, summarizes, and the raw content lives only in your Gmail. The bot is stateless between checks.
+### The interactive path
+
+Message the bot *"check my emails"* and the Hermes gateway on my PC loads the `gmail-check` skill, runs the same IMAP read (last 24h), and replies in chat.
+
+---
+
+## 🧩 Design Problems I Hit (And How They Were Solved)
+
+This project's real value was debugging. Three non-obvious problems, all diagnosed from evidence:
+
+### 1. Two schedulers were sending duplicate digests
+
+I had a local Hermes cron job **and** a GitHub Actions schedule both firing twice a day. They produced two differently-formatted messages at overlapping times.
+
+**Fix:** pick one sender. GitHub Actions became the single source of truth; the local cron was paused.
+
+### 2. The digest "found no emails" even though mail was arriving
+
+**Root cause:** any IMAP client that fetches a message **body** implicitly sets Gmail's `\Seen` flag — `fetch(id, '(RFC822)')` is *not* a read-only operation. Hermes's own Email gateway adapter was doing exactly that on every poll (every ~15s), so new mail was marked read before the digest looked. The inbox was fully consumed: **0 unread out of 15,162**.
+
+```
+$ grep -n "Mark all existing messages as seen" plugins/platforms/email/adapter.py
+588:  # Mark all existing messages as seen so we only process new ones
+672:  status, msg_data = imap.uid("fetch", uid, "(RFC822)")   # ← sets \Seen
+```
+
+**Fixes:**
+- Select mail by **arrival time** (`--since-hours 12`), which is independent of read state
+- Read bodies with **`BODY.PEEK[]`** so the digest never mutates read state either
+- **Disable the Email gateway adapter** (it was also silently marking my mail read in Gmail) by removing `EMAIL_ADDRESS` from the gateway environment — credentials moved to `GMAIL_USER` / `GMAIL_APP_PASSWORD`, which don't trigger the adapter
+
+### 3. GitHub's cron ran the digest 6 hours late
+
+GitHub's free `schedule:` is explicitly *best-effort*. Actual observed runs:
+
+| Scheduled (UTC) | Actually ran | Delay |
+|---|---|---|
+| 01:00 (9am SGT) | 06:45 | **5h 45m late** |
+| 10:00 (6pm SGT) | 16:25 | **6h 25m late** |
+| 13:00 (9pm SGT) | 19:07 | **6h 07m late** |
+
+**Fix:** trigger the workflow from outside GitHub. `cron-job.org` (free) POSTs to the dispatch API at exactly 09:00 / 21:00 SGT — dispatched runs start immediately. GitHub's own schedule was moved to 09:30 / 21:30 SGT as a **fallback** (same 12h slot, so the dedupe gate suppresses it whenever the punctual trigger already fired).
 
 ---
 
 ## 🧩 Components
 
-### 1. Hermes Agent (the harness)
-Open-source agent framework by Nous Research. Provides:
-- **Gateway** — the process that connects to Telegram and runs 24/7
-- **Skill system** — reusable procedures loaded on demand (our `gmail-check` skill)
-- **Cron scheduler** — for the twice-daily email digests
-- **Tool-calling loop** — decides when to read email, run Python, or reply
-
-### 2. Telegram Bot
-Created via **@BotFather**. The gateway polls Telegram's Bot API (or uses webhooks for cloud deployments). Access is restricted via `TELEGRAM_ALLOWED_USERS`.
-
-### 3. Gmail (IMAP)
-Read-only-ish access using an **App Password** (never your real password). The skill uses Python's built-in `imaplib` — no third-party email libraries needed.
-
-### 4. DeepSeek API
-The LLM that powers reasoning, summarization, and reply formatting. Set as the model provider in Hermes (`model.provider: deepseek`).
+| Component | Role |
+|---|---|
+| **cron-job.org** | External free scheduler — the punctual trigger |
+| **GitHub Actions** | Runs the digest in the cloud; 2,000 free minutes/month on public repos (a run uses ~1 min) |
+| **Hermes Agent** | Agent harness: gateway, skill system, tool-calling loop, local cron |
+| **Telegram Bot** | Delivery channel (@BotFather token, allowlisted to my user ID) |
+| **Gmail (IMAP)** | Data source — Python stdlib `imaplib`, app-password auth |
+| **DeepSeek API** | Writes the human-readable summary |
 
 ---
 
-## 🚀 Quick Start
+## ⚙️ Operational Status
 
-### Prerequisites
-- Python 3.10+ and [Hermes Agent](https://hermes-agent.nousresearch.com/install.sh)
-- A Telegram account
-- A Gmail account with 2FA enabled
-- A [DeepSeek API key](https://platform.deepseek.com)
+| Piece | State | Notes |
+|---|---|---|
+| cron-job.org trigger | ✅ **Active** | Primary punctual trigger |
+| GitHub Actions workflow | ✅ **Active** | Sends the digest; fallback schedule armed |
+| Dedupe gate | ✅ **Active** | Prevents double-sends |
+| Interactive Telegram bot | ✅ **Running** | On my PC; needs the gateway up |
+| Local Hermes trigger cron | ⏸️ **Paused** | Spare — enable only if cron-job.org dies (never run both punctually, or they race) |
+| Email gateway adapter | ⛔ **Disabled** | Was marking mail read; `EMAIL_*` removed from gateway env |
 
-### Step 1 — Install Hermes
+### Health checks
+
 ```bash
-curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
-hermes setup
-```
-
-### Step 2 — Create the Telegram bot
-1. Message **[@BotFather](https://t.me/BotFather)** → `/newbot`
-2. Choose a name + username (must end in `bot`)
-3. Copy the token it gives you
-
-### Step 3 — Find your Telegram user ID
-Message **[@userinfobot](https://t.me/userinfobot)** — it replies with your numeric ID.
-
-### Step 4 — Create a Gmail App Password
-1. Enable 2FA: `myaccount.google.com/security`
-2. Generate an app password: `myaccount.google.com/apppasswords` → "Other" → name it `Hermes`
-3. Copy the 16-character code
-
-### Step 5 — Configure Hermes
-Copy the example env and fill in your values:
-```bash
-cp .env.example .env
-# edit .env — fill in TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USERS,
-# EMAIL_*, DEEPSEEK_API_KEY
-```
-
-Or set the key ones directly:
-```bash
-echo 'TELEGRAM_BOT_TOKEN=123456789:ABC...'   >> ~/.hermes/.env
-echo 'TELEGRAM_ALLOWED_USERS=123456789'      >> ~/.hermes/.env
-echo 'EMAIL_ADDRESS=you@gmail.com'           >> ~/.hermes/.env
-echo 'EMAIL_PASSWORD=abcd efgh ijkl mnop'    >> ~/.hermes/.env
-echo 'EMAIL_IMAP_HOST=imap.gmail.com'        >> ~/.hermes/.env
-echo 'DEEPSEEK_API_KEY=sk-...'               >> ~/.hermes/.env
-```
-
-### Step 6 — Install the skill
-```bash
-# Copy the skill into your Hermes skills directory
-cp -r skills/gmail-check ~/.hermes/skills/productivity/
-hermes skills list   # verify it shows up
-```
-
-### Step 7 — Start the gateway
-```bash
-hermes gateway run        # foreground (test first)
-hermes gateway install    # background service (production)
+# Is the local bot alive?
 hermes gateway status
+
+# What's scheduled locally?
+hermes cron list --all
+
+# Did recent digests run, and what did they decide?
+#   → open https://github.com/K9lv1n/hermes-telegram-email-bot/actions
+#   → click a run → look for "gate:" lines in the log
+
+# Test the whole cloud path right now (ignores the dedupe gate)
+#   → Actions tab → Email Digest → Run workflow → tick "force"
 ```
-
-### Step 8 — Use it!
-- Message your bot: **"check my emails"** → instant inbox summary
-- Or wait for the scheduled 9am/6pm digest
-
----
-
-## ⏰ Scheduled Summaries
-
-Two delivery paths are supported. Pick **one** — running both gives you duplicate messages.
-
-### Option A — GitHub Actions (recommended: free, no server needed)
-
-`.github/workflows/email-digest.yml` runs in GitHub's cloud twice a day and needs no machine of yours to be on.
-
-| | |
-|---|---|
-| **Schedule** | `0 1,13 * * *` UTC = **09:00 & 21:00 Singapore time** daily |
-| **Format** | DeepSeek writes a readable narrative summary (assessment + per-item notes + `Net:` line) |
-| **Cost** | Free — 2,000 Actions minutes/month on public repos (each run uses <1 min) |
-
-**Required repo secrets** (Settings → Secrets and variables → Actions):
-
-| Secret | Value |
-|---|---|
-| `EMAIL_ADDRESS` | your Gmail address |
-| `EMAIL_PASSWORD` | your Gmail **app password** |
-| `TELEGRAM_BOT_TOKEN` | BotFather token |
-| `TELEGRAM_CHAT_ID` | your numeric Telegram user ID |
-| `DEEPSEEK_API_KEY` | your DeepSeek key (enables the readable summary) |
-
-> **📮 Why the digest uses a time window, not "unread":** any IMAP client that
-> fetches a message body implicitly sets Gmail's `\Seen` flag. Hermes's Email
-> gateway adapter does exactly this (and other mail clients do too), so an
-> "unread-only" digest silently finds nothing. The workflow therefore selects
-> mail by **arrival time** (`--since-hours 12`) and reads bodies with
-> `BODY.PEEK[]` so it never mutates your read state.
-
-> **⏱️ Important caveat:** GitHub's free cron is *best-effort*. Scheduled workflows are
-> queued and can run tens of minutes — sometimes hours — late under load, and may be
-> skipped entirely. Observed real-world delays in this project: **5–6 hours**.
-> For punctual delivery, see "Reliable timing" below.
-
-### Option B — Hermes cron (local, exact timing when your machine is on)
-
-```bash
-hermes cron create "0 9,21 * * *" \
-  --name "Email Priority Summary" \
-  --prompt "Load the gmail-check skill and summarize my inbox by priority." \
-  --skills gmail-check \
-  --deliver telegram:<your_user_id>
-```
-
-Runs on schedule while your machine is powered on; silently misses runs when it's off.
-
-### ⏱️ Getting punctual 09:00 / 21:00 delivery (free)
-
-GitHub's own `schedule:` can run hours late, so the workflow supports being
-**triggered externally** instead — a dispatch executes immediately, bypassing the
-delay queue.
-
-**Option 1 — local trigger (what this repo uses).** A Hermes cron job runs
-`scripts/trigger_digest.py` at exactly 09:00 / 21:00 SGT:
-
-```bash
-hermes cron create "0 9,21 * * *" --name "Email Digest Trigger (punctual)" \
-  --script trigger_digest.py --no-agent
-```
-
-Silent on success and messages you only if the trigger fails. Works whenever the
-gateway is running (it auto-starts on login). No third-party account needed.
-
-**If the machine is off**, the workflow's own fallback schedule (01:30 / 13:30 UTC —
-30 min later but inside the *same* 12h slot) still delivers, and the dedupe gate stops
-it double-sending when the local trigger already fired.
-
-**Option 2 — fully cloud (cron-job.org).** To remove the dependency on your machine
-entirely, point a free external scheduler at the same dispatch API.
-
-**Step 1 — make a narrow-scope token.** GitHub → Settings → Developer settings →
-**Fine-grained tokens** → Generate new token:
-- **Repository access:** Only select repositories → `hermes-telegram-email-bot`
-- **Permissions:** Repository permissions → **Actions: Read and write** (nothing else)
-- Copy the token (starts with `github_pat_...`)
-
-Using a fine-grained token means a leak can only trigger workflows in this one repo —
-it cannot read or write your code.
-
-**Step 2 — create the cron job** at [cron-job.org](https://cron-job.org) (free account):
-
-| Field | Value |
-|---|---|
-| **Title** | Hermes email digest |
-| **URL** | `https://api.github.com/repos/K9lv1n/hermes-telegram-email-bot/actions/workflows/email-digest.yml/dispatches` |
-| **Schedule** | Custom: `0 09:00` and `0 21:00`, timezone **Asia/Singapore** |
-| **Request method** | `POST` |
-| **Request body** | `{"ref":"main"}` (Content-Type: `application/json`) |
-
-**Request headers:**
-```
-Authorization: Bearer github_pat_YOUR_TOKEN
-Accept: application/vnd.github+json
-Content-Type: application/json
-X-GitHub-Api-Version: 2022-11-28
-```
-
-A `204 No Content` response means success.
-
-**Step 3 — no double-sends.** `scripts/should_run.py` defines 12-hour slots aligned to
-09:00/21:00 SGT and skips a run if a successful digest already went out in that slot.
-So the punctual trigger and GitHub's late fallback schedule can coexist safely —
-whichever fires first wins, the other becomes a no-op.
-
-> Need to force a send outside the gate (e.g. to test)? Run the workflow manually from
-> the **Actions** tab with **force** checked.
-
----
-
-## 🔐 Security Notes
-
-- **Never commit `.env`** — it's git-ignored; real credentials live only on your machine
-- Use **Gmail App Passwords**, never your real Gmail password
-- The bot is **locked to your user ID** by default; add friends by appending their IDs to `TELEGRAM_ALLOWED_USERS`
-- The DeepSeek key is stored in Hermes' credential store — treat it like a password
-- If a token leaks: `/revoke` in BotFather, revoke the Gmail app password, and rotate the DeepSeek key
 
 ---
 
@@ -268,45 +182,124 @@ whichever fires first wins, the other becomes a no-op.
 
 ```
 hermes-telegram-email-bot/
-├── README.md                 ← you are here
-├── ARCHITECTURE.md           ← deep-dive into how it works
-├── .env.example              ← template for secrets (git-ignored .env)
+├── README.md                     ← you are here (operational overview)
+├── ARCHITECTURE.md               ← deeper design notes
+├── .env.example                  ← template for secrets (.env is git-ignored)
 ├── .gitignore
-├── skills/
-│   └── gmail-check/
-│       └── SKILL.md          ← the Hermes skill: trigger phrases, logic, output format
-└── scripts/
-    └── check_emails.py       ← standalone Python version (no Hermes required)
+├── LICENSE                       ← MIT
+├── setup_ubuntu.sh               ← optional: deploy the bot to a Linux VM instead of a PC
+├── .github/workflows/
+│   └── email-digest.yml          ← the cloud digest job
+├── scripts/
+│   ├── check_emails.py           ← Gmail read + priority ranking (time-window, BODY.PEEK)
+│   ├── send_to_telegram.py       ← DeepSeek summary + Telegram delivery
+│   ├── should_run.py             ← 12h-slot dedupe gate
+│   └── trigger_digest.py         ← dispatches the workflow (used by the paused local trigger)
+└── skills/gmail-check/
+    └── SKILL.md                  ← the Hermes skill behind the interactive bot
 ```
+
+---
+
+## 🚀 Reproducing This Setup
+
+### Prerequisites
+- [Hermes Agent](https://hermes-agent.nousresearch.com/install.sh), Python 3.10+
+- A Telegram account, a Gmail account with 2FA, a [DeepSeek API key](https://platform.deepseek.com)
+
+### 1. Telegram bot
+Message **[@BotFather](https://t.me/BotFather)** → `/newbot` → copy the token.
+Get your numeric ID from **[@userinfobot](https://t.me/userinfobot)**.
+
+### 2. Gmail app password
+Enable 2FA at `myaccount.google.com/security`, then create an app password at
+`myaccount.google.com/apppasswords` (choose "Other" → name it `Hermes`).
+
+### 3. Local helpers (`.env`)
+```bash
+cp .env.example .env     # fill in the values
+```
+
+### 4. Local bot (interactive path)
+Add to the Hermes environment file — note the `GMAIL_*` names, **not** `EMAIL_*`
+(setting `EMAIL_ADDRESS` makes Hermes auto-connect the Email gateway adapter, which
+marks your mail as read):
+```
+TELEGRAM_BOT_TOKEN=123456789:ABC...
+TELEGRAM_ALLOWED_USERS=your_numeric_id
+GMAIL_USER=you@gmail.com
+GMAIL_APP_PASSWORD=abcd efgh ijkl mnop
+DEEPSEEK_API_KEY=sk-...
+```
+
+Install the skill and start the gateway:
+```bash
+cp -r skills/gmail-check ~/.hermes/skills/productivity/
+hermes gateway install
+hermes gateway status
+```
+
+### 5. Cloud digest (scheduled path)
+Push this repo, then add the five secrets listed at the top.
+
+### 6. Punctual trigger (the important bit)
+1. Create a **fine-grained GitHub token**: repo access → only this repo; permission → **Actions: Read and write**
+2. On [cron-job.org](https://cron-job.org) (free): `POST` to
+   `https://api.github.com/repos/<owner>/<repo>/actions/workflows/email-digest.yml/dispatches`
+   at **09:00 & 21:00 Asia/Singapore**, body `{"ref":"main"}`, headers:
+   ```
+   Authorization: Bearer github_pat_...
+   Accept: application/vnd.github+json
+   Content-Type: application/json
+   X-GitHub-Api-Version: 2022-11-28
+   ```
+   A `204 No Content` means success.
+3. **Only run one punctual trigger.** If you also enable a local trigger, both will fire
+   in the same minute and can race past the dedupe gate.
+
+---
+
+## 🔧 Troubleshooting
+
+| Symptom | Cause / Fix |
+|---|---|
+| Digest arrived but is empty / "no new emails" | Nothing arrived in the 12h window — normal. Check the run log for `N message(s) in window` |
+| Digest arrived many hours late | The fallback schedule fired (GitHub's own cron is unreliable). Check cron-job.org's job history — the punctual trigger may be failing |
+| Two digests in one slot | Two punctual triggers are enabled (e.g. local + cron-job.org). Disable one |
+| Digest never arrives | Check the Actions tab: is the workflow disabled (60 days repo inactivity)? Is cron-job.org's job enabled? |
+| Interactive bot silent | `hermes gateway status`; the gateway must be running |
+| Interactive bot says credentials missing | Set `GMAIL_USER` / `GMAIL_APP_PASSWORD` in the Hermes env file |
+| Mail is being marked read without me reading it | Something is fetching bodies with `RFC822` — check no `EMAIL_*` vars are set (they enable the Email adapter) |
+| Gmail login fails with app password | 2FA must be enabled; the password must be a 16-char app password, not the account password |
+
+### Useful server-side facts
+- GitHub **auto-disables scheduled workflows after 60 days of repo inactivity** — the external trigger is immune, which is one more reason it's the primary
+- IMAP `SINCE` is **date**-granular, so `check_emails.py` searches a wider window and filters by the message `Date` header locally
+- `fetch(id, '(RFC822)')` sets `\Seen`; `fetch(id, '(BODY.PEEK[])')` does not
+
+---
+
+## 🔐 Security
+
+- **Never commit `.env`** — it's git-ignored; real credentials live only on my machine and in GitHub Secrets
+- The Gmail access uses an **app password** (revocable, 2FA-gated), not the account password
+- The bot is **allowlisted to one Telegram user ID**
+- The cron-job.org token is **fine-grained**: `Actions: write` on this single repo, nothing else
+- If anything leaks: revoke the BotFather token (`/revoke`), the Gmail app password, the DeepSeek key, and the GitHub token
 
 ---
 
 ## 🧠 What I Learned
 
-Building this taught me:
-- **Agent harnesses vs raw API calls** — Hermes adds memory, skills, tools, and multi-platform delivery on top of a plain LLM API
-- **Telegram Bot API** — BotFather tokens, long polling, `getMe`, command scopes, user-ID allowlisting
-- **IMAP from Python** — SSL connection, UNSEEN search, MIME parsing, header decoding, flagging
-- **Gmail security model** — why app passwords exist and how 2FA gates IMAP access
-- **Cron + delivery** — scheduling agent tasks and routing results to a chat platform
-- **Secret hygiene** — `.env` + `.gitignore`, never shipping credentials in a public repo
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full deep-dive.
-
----
-
-## 🛠️ Troubleshooting
-
-| Symptom | Fix |
-|---|---|
-| Bot not responding | Check `hermes gateway status`; verify `TELEGRAM_BOT_TOKEN` in `.env` |
-| `AUTHENTICATE failed` on Gmail | You're using your real password — generate an App Password instead |
-| "Unauthorized" replies | Your user ID isn't in `TELEGRAM_ALLOWED_USERS` |
-| Bot tries to use himalaya CLI | The `gmail-check` skill explicitly overrides this — ensure it's installed & reloaded (`/reload_skills`) |
-| Emails repeat in summaries | Emails are marked SEEN after reading; check the skill's `M.store` step |
+- **Agent harness vs raw API** — Hermes adds skills, tools, memory and multi-platform delivery on top of an LLM API
+- **IMAP semantics bite** — fetching a body mutates state; `\Seen` is a side effect, not a read
+- **"Unread" is a shared, fragile flag** — multiple clients fight over it; time windows are robust
+- **Free cloud cron is best-effort** — GitHub's scheduler is not a clock; external triggers are
+- **Idempotency needs designing** — a dedupe gate is what makes multiple triggers safe to run
+- **Secret hygiene** — `.env` + `.gitignore`, narrow-scope tokens, and never shipping credentials
 
 ---
 
 ## 📄 License
 
-MIT — free to use, learn from, and remix. Built with ❤️ and [Hermes Agent](https://github.com/NousResearch/hermes-agent).
+MIT — free to use, learn from, and remix. Built with [Hermes Agent](https://github.com/NousResearch/hermes-agent).
